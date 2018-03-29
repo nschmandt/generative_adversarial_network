@@ -1,0 +1,148 @@
+
+
+
+#separate for adversarial network
+os.chdir('C:/Users/Nick.Schmandt/Documents/rendered_images_ready2fasten/') #all files in this folder will be analyzed
+render_filenames=os.listdir(os.getcwd())[:100]
+fake_images_input = np.zeros((len(render_filenames),224,224), dtype=np.float32)
+for i in range(len(render_filenames)):
+    temp=cv2.imread(render_filenames[i], 0) #these are grayscaled images
+    temp=(temp-np.mean(temp))/np.max(np.abs(temp))
+    fake_images_input[i,:]=np.reshape(temp, (224,224)).astype('float32')
+#uncomment to make random integer values for the images
+#fake_images_input = np.random.rand(100,224,224,1)*2-1
+
+os.chdir('C:/Users/Nick.Schmandt/Documents/real_images_ready2fasten/')
+real_filenames=os.listdir(os.getcwd())[:100]
+real_images_input = np.zeros((len(real_filenames),224,224), dtype=np.float32)
+for i in range(len(real_filenames)):
+    temp=cv2.imread(real_filenames[i], 0) #these are grayscaled images
+    temp=(temp-np.mean(temp))/np.max(np.abs(temp))
+    real_images_input[i,:]=np.reshape(temp, (224,224)).astype('float32')
+
+
+
+
+tf.reset_default_graph()
+real_images = tf.placeholder(dtype = tf.float32, shape = [None, 224, 224, 1])
+fake_images = tf.placeholder(dtype = tf.float32, shape = [None, 224, 224, 1])
+
+
+
+conv_2d_gen=tf.layers.conv2d(inputs=fake_images, filters=1, kernel_size=[3,3], padding='same', strides=[1,1], \
+                             activation=tf.nn.relu, name='g_conv_2d_1')
+print(conv_2d_gen.shape)
+
+generated_images=tf.layers.conv2d_transpose(inputs=conv_2d_gen, filters=1, kernel_size=[3,3], strides=[1,1], padding='same', \
+                                           name='g_trans_2d_1')
+print(generated_images.shape)
+
+
+
+
+conv_2d_1=tf.layers.conv2d(inputs=real_images, filters=8, kernel_size=[3,3], padding='same', strides=[2,2], \
+                           activation=tf.nn.relu, name='d_conv_2d_1')
+print(conv_2d_1.shape)
+
+conv_2d_2=tf.layers.conv2d(inputs=conv_2d_1, filters=16, kernel_size=[3,3], padding='same', strides=[2,2], \
+                           activation=tf.nn.relu, name='d_conv_2d_2')
+print(conv_2d_2.shape)
+
+conv_2d_3=tf.layers.conv2d(inputs=conv_2d_2, filters=32, kernel_size=[3,3], padding='same', strides=[2,2], \
+                           activation=tf.nn.relu, name='d_conv_2d_3')
+print(conv_2d_3.shape)
+
+real_images_flatten=tf.reshape(conv_2d_3, [-1, 28*28*32])
+#real_images_flatten=tf.reshape(conv_2d_2, [-1, 56*56*16])
+real_logits = tf.layers.dense(real_images_flatten, 1, tf.nn.sigmoid, name='d_final_value')
+
+
+
+conv_2d_1=tf.layers.conv2d(inputs=generated_images, filters=8, kernel_size=[3,3], padding='same', strides=[2,2], \
+                           activation=tf.nn.relu, name='d_conv_2d_1', reuse=True)
+print(conv_2d_1.shape)
+
+conv_2d_2=tf.layers.conv2d(inputs=conv_2d_1, filters=16, kernel_size=[3,3], padding='same', strides=[2,2], \
+                           activation=tf.nn.relu, name='d_conv_2d_2', reuse=True)
+print(conv_2d_2.shape)
+
+conv_2d_3=tf.layers.conv2d(inputs=conv_2d_2, filters=32, kernel_size=[3,3], padding='same', strides=[2,2], \
+                           activation=tf.nn.relu, name='d_conv_2d_3', reuse=True)
+print(conv_2d_3.shape)
+
+fake_images_flatten=tf.reshape(conv_2d_3, [-1, 28*28*32])
+#fake_images_flatten=tf.reshape(conv_2d_2, [-1, 56*56*16])
+fake_logits = tf.layers.dense(fake_images_flatten, 1, tf.nn.sigmoid, name='d_final_value', reuse=True)
+
+
+AE_loss = tf.reduce_sum(tf.square(generated_images-fake_images))
+
+#fake-0, real-1
+real_loss = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(labels = tf.ones_like(real_logits), logits = real_logits))
+fake_loss = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(labels = tf.zeros_like(fake_logits), logits = fake_logits))
+gen_loss = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(labels = tf.ones_like(fake_logits), logits = fake_logits))
+
+
+tvars = tf.trainable_variables()
+
+d_vars = [v for v in tvars if v.name.startswith('d_')]
+g_vars = [v for v in tvars if v.name.startswith('g_')]
+
+
+
+train_op_real = tf.train.AdamOptimizer(learning_rate=0.0003).minimize(real_loss, var_list=d_vars)
+train_op_fake = tf.train.AdamOptimizer(learning_rate=0.0003).minimize(fake_loss, var_list=d_vars)
+train_op_gen = tf.train.AdamOptimizer(learning_rate=0.0002).minimize(gen_loss, var_list=g_vars)
+
+train_op_AE = tf.train.AdamOptimizer(learning_rate=0.001).minimize(AE_loss, var_list=g_vars)
+
+
+
+
+
+
+fake_images_input=np.reshape(fake_images_input, (100,224,224,1))
+real_images_input=np.reshape(real_images_input, (100,224,224,1))
+fake_logit_values=[]
+real_logit_values=[]
+AE_loss_values=[]
+with tf.Session() as sess:
+    sess.run(tf.global_variables_initializer())
+    temp=sess.run(tf.trainable_variables())
+    #this initializes the generator network with an autoencoder function.
+    for i in range(450):
+        _, AE_loss_val, AE_gen_images = sess.run([train_op_AE, AE_loss, generated_images], \
+                                                 feed_dict={real_images: real_images_input, \
+                                                            fake_images: fake_images_input})
+        AE_loss_values.append(AE_loss_val)
+    for i in range(650):
+        #print(i)
+        _, _, _, real_logit_val, fake_logit_val, real_loss_val, fake_loss_val, gen_loss_val, generated_images_val= \
+        sess.run([train_op_real, train_op_fake, train_op_gen, real_logits, fake_logits, real_loss, \
+                  fake_loss, gen_loss, generated_images], feed_dict={real_images: real_images_input, \
+                                                                     fake_images: fake_images_input})
+        loss_values.append(real_loss_val)
+        fake_logit_values.append(np.mean(fake_logit_val))
+        real_logit_values.append(np.mean(real_logit_val))
+        if i%50==0:
+            print('epoch ' + str(i))
+            print('fake logits:')
+            print(np.mean(fake_logit_val))
+            print('real logits:')
+            print(np.mean(real_logit_val))
+        if np.mean(fake_logit_val)<.00001:
+            break
+    temp2=sess.run(tf.trainable_variables())
+    writer = tf.summary.FileWriter('C:/Users/Nick.Schmandt/Downloads', sess.graph)
+    writer.close()
+    #print('Real loss: ')
+    #print(real_loss_val)
+    #print('Fake loss: ')
+    #print(fake_loss_val)
+    #print('Gen loss: ')
+    #print(gen_loss_val)
+    print('Fake Logits Values:')
+    print(np.mean(fake_logit_val))
+    print('Real Logits Values:')
+    print(np.mean(real_logit_val))
+    #print(loss_values)
